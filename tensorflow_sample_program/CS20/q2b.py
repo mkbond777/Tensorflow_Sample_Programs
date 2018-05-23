@@ -16,27 +16,32 @@ import time
 import utils
 
 # Define paramaters for the model
-learning_rate = 0.01
-batch_size = 128
+learning_rate = 0.001
+beta = 0
+batch_size = 256
 n_epochs = 30
-n_train = 60000
+n_train = 40000
 n_test = 10000
 
 # Step 1: Read in data
 mnist_folder = 'data/mnist'
 utils.download_mnist(mnist_folder)
-train, val, test = utils.read_mnist(mnist_folder, flatten=True)
+train, val, test = utils.read_mnist(mnist_folder, flatten=True, num_train=n_train)
 
 # Step 2: Create datasets and iterator
 # create training Dataset and batch it
 train_data = tf.data.Dataset.from_tensor_slices(train)
 train_data = train_data.shuffle(10000)  # if you want to shuffle your data
 train_data = train_data.batch(batch_size)
+print(train_data.output_shapes)
 
 # create testing Dataset and batch it
 test_data = tf.data.Dataset.from_tensor_slices(test)
 test_data = test_data.batch(batch_size)
 
+# create validation data and batch it
+val_data = tf.data.Dataset.from_tensor_slices(val)
+val_data = val_data.batch(batch_size)
 
 # create one iterator and initialize it with different datasets
 iterator = tf.data.Iterator.from_structure(train_data.output_types,
@@ -44,7 +49,8 @@ iterator = tf.data.Iterator.from_structure(train_data.output_types,
 img, label = iterator.get_next()
 
 train_init = iterator.make_initializer(train_data)  # initializer for train_data
-test_init = iterator.make_initializer(test_data)  # initializer for train_data
+test_init = iterator.make_initializer(test_data)  # initializer for test_data
+val_init = iterator.make_initializer(val_data)  # initializer for val_data
 
 # Step 3: create weights and bias
 # w is initialized to random variables with mean of 0, stddev of 0.01
@@ -54,23 +60,25 @@ test_init = iterator.make_initializer(test_data)  # initializer for train_data
 w = tf.Variable(tf.random_normal(shape=[784, 10], stddev=0.01), name='weights')
 b = tf.Variable(tf.zeros([1, 10]), name='bias')
 
-
 # Step 4: build model
 # the model that returns the logits.
 # this logits will be later passed through softmax layer
 logits = tf.matmul(img, w) + b
 
-
 # Step 5: define loss function
 # use cross entropy of softmax of logits as the loss function
-entropy = tf.nn.softmax_cross_entropy_with_logits(labels=label, logits=logits)
+entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=label, logits=logits)
 loss = tf.reduce_mean(entropy)
+
+# Loss function using L2 Regularization
+# FIXME Adding regularization parameter is not helping
+# regularizer = tf.nn.l2_loss(w)
+# loss = tf.reduce_mean(loss + beta * regularizer)
 
 
 # Step 6: define optimizer
 # using Adamn Optimizer with pre-defined learning rate to minimize loss
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
-
 
 # Step 7: calculate accuracy with test set
 preds = tf.nn.softmax(logits)
@@ -94,8 +102,22 @@ with tf.Session() as sess:
                 n_batches += 1
         except tf.errors.OutOfRangeError:
             pass
-        print('Average loss epoch {0}: {1}'.format(i, total_loss / n_batches))
+        if i % 5 == 0:
+            print('Total Loss = {0}, Batch = {1}'.format(total_loss, n_batches))
+            print('Average loss epoch {0}: {1}'.format(i, total_loss / n_batches))
     print('Total time: {0} seconds'.format(time.time() - start_time))
+
+    # cross validate the model
+    sess.run(val_init)  # drawing samples from val_data
+    total_correct_preds = 0
+    try:
+        while True:
+            accuracy_batch = sess.run(accuracy)
+            total_correct_preds += accuracy_batch
+    except tf.errors.OutOfRangeError:
+        pass
+
+    print('Accuracy {0}'.format(total_correct_preds / (60000 - n_train)))
 
     # test the model
     sess.run(test_init)  # drawing samples from test_data
